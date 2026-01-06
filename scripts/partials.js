@@ -1,3 +1,9 @@
+// filtering thresholds - adjust these later on if necessary
+// not interested in making them user definable for now, should Just Work
+const MIN_DURATION_RATIO = 0.3;      // partial must last at least 30% of total duration
+const MAX_FREQUENCY_CV = 0.1;        // frequency coefficient of variation must be <= 10%
+const MIN_AMPLITUDE_RATIO = 0.01;    // peak amplitude must be at least 1% of global max
+
 let selectedFiles = null;
 
 const fileInput = document.getElementById('fileInput');
@@ -16,6 +22,10 @@ function handleFileSelect() {
 
 async function handleConvert() {
     // TODO: implement conversion logic
+}
+
+function analysePartial(partial, globalMaxAmp, totalDuration) {
+
 }
 
 // helper functions - what other common functions need to be made?
