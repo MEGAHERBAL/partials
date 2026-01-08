@@ -17,11 +17,90 @@ fileInput.addEventListener('change', handleFileSelect);
 convertBtn.addEventListener('click', handleConvert);
 
 function handleFileSelect() {
-    // TODO: implement file selection logic
+    selectedFiles = fileInput.files;
+
+    if (selectedFiles.length === 0) {
+        convertBtn.disabled = true;
+        return;
+    }
+
+    for (const file of selectedFiles) {
+        if (!file.name.endsWith('.utu')) {
+            statusDiv.textContent = 'Please select only .utu files';
+            statusDiv.className = 'status error';
+            convertBtn.disabled = true;
+            return;
+        }
+    }
+
+    if (selectedFiles.length === 1) {
+        const filename = selectedFiles[0].name.replace('.utu', '');
+        profileNameInput.value = filename;
+        profileNameInput.disabled = false;
+    } else {
+        profileNameInput.value = '';
+        profileNameInput.disabled = true;
+    }
+
+    const fileCount = selectedFiles.length;
+    statusDiv.textContent = fileCount === 1 ? '1 file selected' : `${fileCount} files selected`;
+    statusDiv.className = 'status';
+    convertBtn.disabled = false;
 }
 
 async function handleConvert() {
-    // TODO: implement conversion logic
+    convertBtn.disabled = true;
+    statusDiv.textContent = 'Converting...';
+    statusDiv.className = 'status';
+
+    try {
+        const options = {
+            quantise: quantiseCheckbox.checked,
+            oddOnly: oddOnlyCheckbox.checked
+        };
+
+        if (selectedFiles.length === 1) {
+            // converting a single file allows custom profile name
+            const file = selectedFiles[0];
+            const fileText = await file.text();
+            const vutuData = parseVutuFile(fileText);
+
+            options.profileName = profileNameInput.value || file.name.replace('.utu', '');
+
+            const csvContent = convertVutuToZebra(vutuData, options);
+            downloadCSV(csvContent, `${options.profileName}.csv`);
+
+            statusDiv.textContent = '.utu successfully converted';
+            statusDiv.className = 'status success';
+        } else {
+            // multiple files will use the .utu filename
+            const convertedFiles = [];
+
+            for (const file of selectedFiles) {
+                const fileText = await file.text();
+                const vutuData = parseVutuFile(fileText);
+
+                const profileName = file.name.replace('.utu', '');
+                options.profileName = profileName;
+
+                const csvContent = convertVutuToZebra(vutuData, options);
+                convertedFiles.push({
+                    filename: `${profileName}.csv`,
+                    content: csvContent
+                });
+            }
+
+            await downloadZip(convertedFiles);
+
+            statusDiv.textContent = `${selectedFiles.length} files successfully converted`;
+            statusDiv.className = 'status success';
+        }
+    } catch (error) {
+        statusDiv.textContent = `Error: ${error.message}`;
+        statusDiv.className = 'status error';
+    } finally {
+        convertBtn.disabled = false;
+    }
 }
 
 function convertVutuToZebra(vutuData, options) {
@@ -57,7 +136,7 @@ function convertVutuToZebra(vutuData, options) {
 
     // and possible no partials survived 😔
     if (analysedPartials.length === 0) {
-        return generateEmptyCSV(options.profileName);
+        return generateZebraCSV(analysedPartials, options.profileName);
     }
 
     const referenceFreq = analysedPartials[0].frequency;
@@ -80,10 +159,6 @@ function convertVutuToZebra(vutuData, options) {
     }
     if (options.oddOnly) {
         filteredPartials = discardEvenHarmonics(filteredPartials);
-    }
-
-    if (filteredPartials.length === 0) {
-        return generateEmptyCSV(options.profileName);
     }
 
     return generateZebraCSV(filteredPartials, options.profileName);
@@ -132,7 +207,7 @@ function analysePartial(partial, globalMaxAmp, totalDuration) {
     };
 }
 
-// misc helpers
+/* misc helpers */
 
 function parseVutuFile(fileText) {
     try {
@@ -143,8 +218,82 @@ function parseVutuFile(fileText) {
     }
 }
 
-// maths helper functions
-// not sure if anything else needs to be added here
+// if all of the partials were filtered out, just generates an empty template
+// not sure if it's even possible for that to happen so no need for special logic I think
+function generateZebraCSV(partials, profileName) {
+    const lines = [];
+
+    lines.push(profileName);
+    lines.push('Combined Ratio;GainDB;Decay');
+    lines.push('');
+
+    for (const partial of partials) {
+        lines.push(`${partial.ratio};${partial.gainDB};${partial.decay}`);
+    }
+
+    return lines.join('\n');
+}
+
+function downloadCSV(content, filename) {
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+
+    link.href = url;
+    link.download = filename;
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    URL.revokeObjectURL(url);
+}
+
+// if we have multiple files, zip em up
+async function downloadZip(files) {
+    const zip = new JSZip();
+
+    for (const file of files) {
+        zip.file(file.filename, file.content);
+    }
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(zipBlob);
+    const link = document.createElement('a');
+
+    link.href = url;
+    link.download = 'converted-profiles.zip';
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    URL.revokeObjectURL(url);
+}
+
+// quantise partials to the nearest whole ratio
+function quantisePartials(partials) {
+    const bestPartials = new Map();
+
+    for (const partial of partials) {
+        const roundedRatio = Math.round(partial.ratio);
+
+        // check for duplicate partials, select loudest
+        if (!bestPartials.has(roundedRatio) ||
+            partial.gainDB > bestPartials.get(roundedRatio).gainDB) {
+            bestPartials.set(roundedRatio, { ...partial, ratio: roundedRatio });
+        }
+    }
+
+    return Array.from(bestPartials.values());
+}
+
+function discardEvenHarmonics(partials) {
+    return partials.filter(p => !isEvenHarmonic(p.ratio));
+}
+
+/* maths helper functions
+not sure if anything else needs to be added here */
 
 function standardDeviation(values) {
     const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
@@ -183,10 +332,6 @@ function calculateDecayValue(peakAmp, finalAmp, timeAtPeak, timeAtEnd) {
     const duration = timeAtEnd - timeAtPeak;
     const amplitudeDrop = peakAmp - finalAmp;
     return duration / amplitudeDrop;
-}
-
-function roundToNearest(value, nearest) {
-    return Math.round(value / nearest) * nearest;
 }
 
 function isEvenHarmonic(ratio) {
